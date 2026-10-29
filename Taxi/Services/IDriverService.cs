@@ -1,16 +1,13 @@
-﻿using System.Collections.Generic;
-using System.Threading.Tasks;
-using Taxi.Models;
+﻿using Taxi.DTOs;
 
-namespace Taxi.Services
+namespace Taxi.Services;
+
+public interface IDriverService
 {
-    public interface IDriverService
-    {
-        List<Driver> GetAll();
-        Driver GetById(int id);
-        Driver Add(Driver driver);
-        Driver Update(int id, Driver driver);
-        void Delete(int id);
-        void DeleteAll();
-    }
+    Task<List<DriverResponseDto>> GetAllAsync();
+    Task<DriverResponseDto> GetByIdAsync(int id);
+    Task<DriverResponseDto> CreateAsync(DriverCreateDto dto);
+    Task<DriverResponseDto> UpdateAsync(int id, DriverUpdateDto dto);
+    Task DeleteAsync(int id);
+    Task DeleteAllAsync();
 }

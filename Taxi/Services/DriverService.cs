@@ -1,120 +1,107 @@
-﻿using System.Collections.Generic;
-using System.Linq;
-using Microsoft.Extensions.Logging;
+﻿using AutoMapper;
+using FluentValidation;
+using Taxi.DTOs;
 using Taxi.Exceptions;
 using Taxi.Models;
+using Taxi.Repositories;
 
-namespace Taxi.Services
+namespace Taxi.Services;
+
+public class DriverService : IDriverService
 {
-    public class DriverService : IDriverService
+    private readonly IDriverRepository driverRepository;
+    private readonly ICarRepository carRepository;
+    private readonly IMapper mapper;
+    private readonly IValidator<DriverCreateDto> createValidator;
+    private readonly IValidator<DriverUpdateDto> updateValidator;
+    private readonly ILogger<DriverService> logger;
+
+    public DriverService(IDriverRepository driverRepository, ICarRepository carRepository, IMapper mapper, IValidator<DriverCreateDto> createValidator, IValidator<DriverUpdateDto> updateValidator, ILogger<DriverService> logger)
     {
-        private readonly IJsonDataService dataService;
-        private readonly ILogger<DriverService> logger;
+        this.driverRepository = driverRepository;
+        this.carRepository = carRepository;
+        this.mapper = mapper;
+        this.createValidator = createValidator;
+        this.updateValidator = updateValidator;
+        this.logger = logger;
+    }
 
-        public DriverService(IJsonDataService dataService, ILogger<DriverService> logger)
+    public async Task<List<DriverResponseDto>> GetAllAsync()
+    {
+        logger.LogInformation("Виконано запит на отримання всіх водіїв.");
+        var drivers = await driverRepository.GetAllAsync();
+        return mapper.Map<List<DriverResponseDto>>(drivers);
+    }
+
+    public async Task<DriverResponseDto> GetByIdAsync(int id)
+    {
+        logger.LogInformation("Пошук водія з ID: {Id}", id);
+        var driver = await GetExistingDriverAsync(id);
+        logger.LogInformation("Водія знайдено: {FullName}", driver.FullName);
+        return mapper.Map<DriverResponseDto>(driver);
+    }
+
+    public async Task<DriverResponseDto> CreateAsync(DriverCreateDto dto)
+    {
+        await createValidator.ValidateAndThrowAsync(dto);
+        await EnsureCarExistsAsync(dto.CarId);
+
+        var driver = mapper.Map<Driver>(dto);
+        await driverRepository.AddAsync(driver);
+
+        logger.LogInformation("[Успіх] Додано нового водія: {FullName}, ID: {Id}", driver.FullName, driver.Id);
+        return mapper.Map<DriverResponseDto>(driver);
+    }
+
+    public async Task<DriverResponseDto> UpdateAsync(int id, DriverUpdateDto dto)
+    {
+        await updateValidator.ValidateAndThrowAsync(dto);
+
+        var driver = await GetExistingDriverAsync(id);
+
+        if (driver.CarId != dto.CarId)
         {
-            this.dataService = dataService;
-            this.logger = logger;
+            await EnsureCarExistsAsync(dto.CarId);
         }
 
-        public List<Driver> GetAll()
+        mapper.Map(dto, driver);
+        await driverRepository.UpdateAsync(driver);
+
+        logger.LogInformation("[Успіх] Дані водія ID {Id} успішно оновлено.", id);
+        return mapper.Map<DriverResponseDto>(driver);
+    }
+
+    public async Task DeleteAsync(int id)
+    {
+        var driver = await GetExistingDriverAsync(id);
+        await driverRepository.DeleteAsync(driver);
+        logger.LogInformation("[Успіх] Водія ID {Id} видалено з бази.", id);
+    }
+
+    public async Task DeleteAllAsync()
+    {
+        var deleted = await driverRepository.DeleteAllAsync();
+        logger.LogWarning("[Увага] Видалено всіх водіїв ({Count})!", deleted);
+    }
+
+    private async Task<Driver> GetExistingDriverAsync(int id)
+    {
+        var driver = await driverRepository.GetByIdAsync(id);
+        if (driver is null)
         {
-            logger.LogInformation("Виконано запит на отримання всіх водіїв.");
-            var data = dataService.LoadData();
-            return data.Driver;
+            logger.LogWarning("[Увага] Водія з ID {Id} не знайдено в базі!", id);
+            throw new NotFoundException($"Водія з ID {id} не знайдено.");
         }
 
-        public Driver GetById(int id)
+        return driver;
+    }
+
+    private async Task EnsureCarExistsAsync(int carId)
+    {
+        if (!await carRepository.ExistsAsync(carId))
         {
-            logger.LogInformation($"Пошук водія з ID: {id}");
-            var data = dataService.LoadData();
-            var driver = data.Driver.FirstOrDefault(d => d.Id == id);
-            
-            if (driver == null)
-            {
-                logger.LogWarning($"[Увага] Водія з ID {id} не знайдено в базі!");
-                throw new NotFoundException($"Водія з ID {id} не знайдено.");
-            }
-            
-            logger.LogInformation($"Водія знайдено: {driver.FullName}");
-            return driver;
-        }
-
-        public Driver Add(Driver driver)
-        {
-            var data = dataService.LoadData();
-            
-            if (!data.Cars.Any(c => c.Id == driver.CarId))
-            {
-                logger.LogWarning($"[Помилка] Спроба прив'язати водія до неіснуючого авто (CarId {driver.CarId})");
-                throw new BadRequestException($"Неможливо додати водія: автомобіль з ID {driver.CarId} не існує.");
-            }
-
-            if (data.Driver.Any())
-            {
-                driver.Id = data.Driver.Max(d => d.Id) + 1;
-            }
-            else
-            {
-                driver.Id = 1;
-            }
-            
-            data.Driver.Add(driver);
-            dataService.SaveData(data);
-            
-            logger.LogInformation($"[Успіх] Додано нового водія: {driver.FullName}, ID: {driver.Id}");
-            return driver;
-        }
-
-        public Driver Update(int id, Driver updatedDriver)
-        {
-            var data = dataService.LoadData();
-            var driver = data.Driver.FirstOrDefault(d => d.Id == id);
-            
-            if (driver == null) 
-            {
-                logger.LogWarning($"[Увага] Спроба оновити неіснуючого водія (ID {id})");
-                throw new NotFoundException($"Водія з ID {id} не знайдено.");
-            }
-            
-            if (driver.CarId != updatedDriver.CarId && !data.Cars.Any(c => c.Id == updatedDriver.CarId))
-            {
-                logger.LogWarning($"[Помилка] Спроба перевести водія на неіснуюче авто (CarId {updatedDriver.CarId})");
-                throw new BadRequestException($"Неможливо оновити: автомобіль з ID {updatedDriver.CarId} не існує.");
-            }
-            
-            driver.FullName = updatedDriver.FullName;
-            driver.Rating = updatedDriver.Rating;
-            driver.IsBusy = updatedDriver.IsBusy;
-            driver.CarId = updatedDriver.CarId;
-
-            dataService.SaveData(data);
-            logger.LogInformation($"[Успіх] Дані водія ID {id} успішно оновлено.");
-            return driver;
-        }
-
-        public void Delete(int id)
-        {
-            var data = dataService.LoadData();
-            var driver = data.Driver.FirstOrDefault(d => d.Id == id);
-            
-            if (driver == null) 
-            {
-                logger.LogWarning($"[Увага] Спроба видалити неіснуючого водія (ID {id})");
-                throw new NotFoundException($"Водія з ID {id} не знайдено.");
-            }
-
-            data.Driver.Remove(driver);
-            dataService.SaveData(data);
-            logger.LogInformation($"[Успіх] Водія ID {id} видалено з бази.");
-        }
-
-        public void DeleteAll()
-        {
-            var data = dataService.LoadData();
-            data.Driver.Clear();
-            dataService.SaveData(data);
-            logger.LogInformation("[Увага] Всі водії були видалені з бази даних!");
+            logger.LogWarning("[Помилка] Спроба прив'язати водія до неіснуючого авто (CarId {CarId})", carId);
+            throw new BadRequestException($"Автомобіль з ID {carId} не існує.");
         }
     }
 }

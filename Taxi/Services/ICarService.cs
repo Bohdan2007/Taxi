@@ -1,16 +1,14 @@
-﻿using System.Collections.Generic;
-using Taxi.Models;
+﻿using Taxi.DTOs;
 
-namespace Taxi.Services
+namespace Taxi.Services;
+
+public interface ICarService
 {
-    public interface ICarService
-    {
-        List<Car> GetAll();
-        Car GetById(int id);
-        Car Add(Car car);
-        Car Update(int id, Car car);
-        void Delete(int id);
-        void DeleteAll();
-        List<Driver> GetDriversByCarId(int carId);
-    }
+    Task<List<CarResponseDto>> GetAllAsync();
+    Task<CarResponseDto> GetByIdAsync(int id);
+    Task<CarResponseDto> CreateAsync(CarCreateDto dto);
+    Task<CarResponseDto> UpdateAsync(int id, CarUpdateDto dto);
+    Task DeleteAsync(int id);
+    Task DeleteAllAsync();
+    Task<List<DriverResponseDto>> GetDriversByCarIdAsync(int carId);
 }
