@@ -3,50 +3,66 @@ using System.Text.Unicode;
 using AutoMapper;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
+using Taxi.Caching;
 using Taxi.Data;
 using Taxi.Mappings;
 using Taxi.Middleware;
+using Taxi.Options;
 using Taxi.Repositories;
 using Taxi.Services;
 using Taxi.Validators;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.ClearProviders();
+builder.Host.UseSerilog((context, config) => config.ReadFrom.Configuration(context.Configuration));
 
 builder.Services
-    .AddControllers(options =>
+    .AddControllers(mvcOptions =>
     {
-        options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
+        mvcOptions.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
     })
-    .AddJsonOptions(options =>
+    .AddJsonOptions(jsonOptions =>
     {
-        options.JsonSerializerOptions.Encoder = JavaScriptEncoder.Create(UnicodeRanges.All);
+        jsonOptions.JsonSerializerOptions.Encoder = JavaScriptEncoder.Create(UnicodeRanges.All);
     });
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+builder.Services.AddOptions<TaxiFleetOptions>().BindConfiguration(TaxiFleetOptions.SectionName).ValidateDataAnnotations().ValidateOnStart();
 
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("Рядок підключення 'DefaultConnection' не знайдено.");
+builder.Services.AddOptions<CachingOptions>().BindConfiguration(CachingOptions.SectionName).ValidateDataAnnotations().ValidateOnStart();
 
-builder.Services.AddDbContext<TaxiDbContext>(options => options.UseNpgsql(connectionString));
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Рядок підключення 'DefaultConnection' не знайдено.");
+
+builder.Services.AddDbContext<TaxiDbContext>(dbOptions => dbOptions.UseNpgsql(connectionString));
+
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<ICacheService, CacheService>();
+
 builder.Services.AddScoped<ICarRepository, CarRepository>();
 builder.Services.AddScoped<IDriverRepository, DriverRepository>();
+
 builder.Services.AddScoped<ICarService, CarService>();
 builder.Services.AddScoped<IDriverService, DriverService>();
+
 builder.Services.AddValidatorsFromAssemblyContaining<CarCreateDtoValidator>();
 builder.Services.AddAutoMapper(typeof(MappingProfile));
 
 var app = builder.Build();
+
+app.UseSerilogRequestLogging();
+
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
-    
+
     app.Services.GetRequiredService<IMapper>().ConfigurationProvider.AssertConfigurationIsValid();
-    
+
     await using var scope = app.Services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<TaxiDbContext>();
 
@@ -56,15 +72,10 @@ if (app.Environment.IsDevelopment())
         {
             await db.Database.MigrateAsync();
         }
-        else
-        {
-            app.Logger.LogWarning(
-                "Міграцій не знайдено. Виконайте 'dotnet ef migrations add InitialCreate' та 'dotnet ef database update'.");
-        }
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "Не вдалося підключитися до PostgreSQL або застосувати міграції. Перевірте рядок підключення.");
+        app.Logger.LogError(ex, "Не вдалося підключитися до PostgreSQL або застосувати міграції.");
     }
 }
 

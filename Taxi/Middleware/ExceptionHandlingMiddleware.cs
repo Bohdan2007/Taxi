@@ -3,9 +3,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Unicode;
 using FluentValidation;
-using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using Taxi.Exceptions;
+using Taxi.Logging;
 
 namespace Taxi.Middleware;
 
@@ -37,7 +36,7 @@ public class ExceptionHandlingMiddleware
         {
             if (context.Response.HasStarted)
             {
-                logger.LogError(ex, "Помилка після початку відправлення відповіді.");
+                logger.LogError(LogEvents.UnhandledError, ex, "Помилка після початку відправлення відповіді.");
                 throw;
             }
 
@@ -57,10 +56,16 @@ public class ExceptionHandlingMiddleware
                 statusCode = StatusCodes.Status400BadRequest;
                 message = "Помилка валідації вхідних даних.";
                 errors = validationException.Errors.GroupBy(e => e.PropertyName).ToDictionary(g => g.Key, g => g.Select(e => e.ErrorMessage).Distinct().ToArray());
+                logger.LogWarning(LogEvents.ValidationFailed, "[Валідація] {Method} {Path}: {Errors}", context.Request.Method, context.Request.Path, string.Join("; ", validationException.Errors.Select(e => $"{e.PropertyName} — {e.ErrorMessage}")));
                 break;
 
             case BadRequestException:
                 statusCode = StatusCodes.Status400BadRequest;
+                message = exception.Message;
+                break;
+
+            case ForbiddenException:
+                statusCode = StatusCodes.Status403Forbidden;
                 message = exception.Message;
                 break;
 
@@ -73,16 +78,13 @@ public class ExceptionHandlingMiddleware
                 statusCode = StatusCodes.Status409Conflict;
                 message = exception.Message;
                 break;
-            
-            case DbUpdateException { InnerException: PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } }:
-                statusCode = StatusCodes.Status409Conflict;
-                message = "Запис з такими унікальними даними вже існує.";
-                break;
 
             default:
                 statusCode = StatusCodes.Status500InternalServerError;
                 message = "Внутрішня помилка сервера.";
-                logger.LogError(exception, "Необроблений виняток під час виконання запиту {Method} {Path}", context.Request.Method, context.Request.Path);
+                logger.LogError(LogEvents.UnhandledError, exception,
+                    "Необроблений виняток під час виконання запиту {Method} {Path}",
+                    context.Request.Method, context.Request.Path);
                 break;
         }
 

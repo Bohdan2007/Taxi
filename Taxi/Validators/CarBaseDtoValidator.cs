@@ -1,15 +1,20 @@
 ﻿using FluentValidation;
+using Microsoft.Extensions.Options;
 using Taxi.DTOs;
+using Taxi.Options;
 
 namespace Taxi.Validators;
 
 public abstract class CarBaseDtoValidator<T> : AbstractValidator<T> where T : CarBaseDto
 {
-    protected CarBaseDtoValidator()
+    protected CarBaseDtoValidator(IOptionsMonitor<TaxiFleetOptions> fleetOptions)
     {
         RuleLevelCascadeMode = CascadeMode.Stop;
 
-        var maxYear = DateTime.UtcNow.Year + 1;
+        var currentYear = DateTime.UtcNow.Year;
+        var maxCarAge = fleetOptions.CurrentValue.MaxCarAgeYears;
+        var minYear = currentYear - maxCarAge;
+        var maxYear = currentYear + 1;
 
         RuleFor(x => x.Brand)
             .NotEmpty().WithMessage("Марка автомобіля є обов'язковою.")
@@ -23,6 +28,7 @@ public abstract class CarBaseDtoValidator<T> : AbstractValidator<T> where T : Ca
             .InclusiveBetween(0.0, 10.0).WithMessage("Об'єм двигуна має бути від 0 до 10 л (0 — для електромобілів).");
 
         RuleFor(x => x.Year)
-            .InclusiveBetween(ValidationRules.MinCarYear, maxYear).WithMessage($"Рік випуску має бути в межах від {ValidationRules.MinCarYear} до {maxYear}.");
+            .InclusiveBetween(minYear, maxYear)
+            .WithMessage($"Рік випуску має бути від {minYear} до {maxYear}: до роботи в таксопарку допускаються автомобілі не старші за {maxCarAge} років.");
     }
 }
